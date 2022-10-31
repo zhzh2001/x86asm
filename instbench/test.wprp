@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0">
+<Profiles>
+    <SystemCollector Id="SystemCollector_PMC" Base="" Name="WPRSystemCollector">
+      <BufferSize Value="1024" /> <!-- PMU events can be verbose. -->
+      <Buffers Value="256" />
+    </SystemCollector>
+
+    <SystemProvider Id="SystemProvider_ProcThreadForEventCounters">
+      <Keywords>
+        <Keyword Value="Loader"/>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="CSwitch"/> <!--Need to turn on CSwitch system keyword to trace CSwitch event in HardwareCounter -->
+      </Keywords>
+    </SystemProvider>
+ 
+    <HardwareCounter Id="HardwareCounters_EventCounters" Strict=”true”> <!-- Optional Strict attribute to hard fail of any issues -->
+      <Counters>
+        <Counter Value="TotalCycles"/> <!-- beware the event is not used by another session. Only one session can use the event --> 
+        <Counter Value="InstructionRetired" />
+       </Counters>
+      <Events>
+        <Event Value="CSwitch"/> <!-- Counter values are logged on this event. Turn on appropriate keyword in SystemProvider -->
+      </Events>
+    </HardwareCounter>
+
+    <!--Profile to capture the counters with ETW events -->
+    <Profile Id="PMCE.Verbose.File" LoggingMode="File" Name="PMCE" DetailLevel="Verbose" Description="PMC Test">
+        <Collectors Operation="Add">
+            <SystemCollectorId Value="SystemCollector_PMC">
+                <SystemProviderId Value="SystemProvider_ProcThreadForEventCounters"></SystemProviderId>
+                <HardwareCounterId Value="HardwareCounters_EventCounters"></HardwareCounterId>
+            </SystemCollectorId>
+        </Collectors>
+    </Profile>	
+</Profiles>
+</WindowsPerformanceRecorder>
