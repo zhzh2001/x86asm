@@ -1,30 +1,43 @@
 #include <math.h>   // smallpt, a Path Tracer by Kevin Beason, 2009
 #include <stdlib.h> // Make : g++ -O3 -fopenmp explicit.cpp -o explicit
 #include <stdio.h>  // Remove "-fopenmp" for g++ version < 4.2
+#ifdef _WIN32
+// implement erand48() for Windows
 #include <random>
 std::default_random_engine generator;
-std::uniform_real_distribution<double> distr(0.0, 1.0);
-double erand48(unsigned short *X)
+std::uniform_real_distribution<float> distr(0.0, 1.0);
+float erand48(unsigned short *X)
 {
     return distr(generator);
 }
-struct Vec
+#endif
+template <typename T>
+struct Vec_
 {                   // Usage: time ./explicit 16 && xv image.ppm
-    double x, y, z; // position, also color (r,g,b)
-    Vec(double x_ = 0, double y_ = 0, double z_ = 0)
+    T x, y, z;      // position, also color (r,g,b)
+    Vec_(T x_ = 0, T y_ = 0, T z_ = 0)
     {
         x = x_;
         y = y_;
         z = z_;
     }
-    Vec operator+(const Vec &b) const { return Vec(x + b.x, y + b.y, z + b.z); }
-    Vec operator-(const Vec &b) const { return Vec(x - b.x, y - b.y, z - b.z); }
-    Vec operator*(double b) const { return Vec(x * b, y * b, z * b); }
-    Vec mult(const Vec &b) const { return Vec(x * b.x, y * b.y, z * b.z); }
-    Vec &norm() { return *this = *this * (1 / sqrt(x * x + y * y + z * z)); }
-    double dot(const Vec &b) const { return x * b.x + y * b.y + z * b.z; } // cross:
-    Vec operator%(Vec &b) { return Vec(y * b.z - z * b.y, z * b.x - x * b.z, x * b.y - y * b.x); }
+    template <typename U>
+    Vec_(const Vec_<U> &v)
+    {
+        x = v.x;
+        y = v.y;
+        z = v.z;
+    }
+    Vec_ operator+(const Vec_ &b) const { return Vec_(x + b.x, y + b.y, z + b.z); }
+    Vec_ operator-(const Vec_ &b) const { return Vec_(x - b.x, y - b.y, z - b.z); }
+    Vec_ operator*(T b) const { return Vec_(x * b, y * b, z * b); }
+    Vec_ mult(const Vec_ &b) const { return Vec_(x * b.x, y * b.y, z * b.z); }
+    Vec_ &norm() { return *this = *this * (1 / sqrt(x * x + y * y + z * z)); }
+    T dot(const Vec_ &b) const { return x * b.x + y * b.y + z * b.z; } // cross:
+    Vec_ operator%(Vec_ &b) { return Vec_(y * b.z - z * b.y, z * b.x - x * b.z, x * b.y - y * b.x); }
 };
+typedef Vec_<float> Vec;
+typedef Vec_<double> Vecd;
 struct Ray
 {
     Vec o, d;
@@ -38,13 +51,13 @@ enum Refl_t
 }; // material types, used in radiance()
 struct Sphere
 {
-    double rad;  // radius
+    float rad;   // radius
     Vec p, e, c; // position, emission, color
     Refl_t refl; // reflection type (DIFFuse, SPECular, REFRactive)
-    Sphere(double rad_, Vec p_, Vec e_, Vec c_, Refl_t refl_) : rad(rad_), p(p_), e(e_), c(c_), refl(refl_) {}
-    double intersect(const Ray &r) const
+    Sphere(float rad_, Vec p_, Vec e_, Vec c_, Refl_t refl_) : rad(rad_), p(p_), e(e_), c(c_), refl(refl_) {}
+    float intersect(const Ray &r) const
     {                     // returns distance, 0 if nohit
-        Vec op = p - r.o; // Solve t^2*d.d + 2*t*(o-p).d + (o-p).(o-p)-R^2 = 0
+        Vecd op = Vecd(p) - r.o; // Solve t^2*d.d + 2*t*(o-p).d + (o-p).(o-p)-R^2 = 0
         double t, eps = 1e-4, b = op.dot(r.d), det = b * b - op.dot(op) + rad * rad;
         if (det < 0)
             return 0;
@@ -66,12 +79,12 @@ Sphere spheres[] = {
     Sphere(1.5, Vec(50, 81.6 - 16.5, 81.6), Vec(4, 4, 4) * 100, Vec(), DIFF), // Lite
 };
 int numSpheres = sizeof(spheres) / sizeof(Sphere);
-inline double clamp(double x) { return x < 0 ? 0 : x > 1 ? 1
-                                                         : x; }
-inline int toInt(double x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }
-inline bool intersect(const Ray &r, double &t, int &id)
+inline float clamp(float x) { return x < 0 ? 0 : x > 1 ? 1
+                                                       : x; }
+inline int toInt(float x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }
+inline bool intersect(const Ray &r, float &t, int &id)
 {
-    double n = sizeof(spheres) / sizeof(Sphere), d, inf = t = 1e20;
+    float n = sizeof(spheres) / sizeof(Sphere), d, inf = t = 1e20;
     for (int i = int(n); i--;)
         if ((d = spheres[i].intersect(r)) && d < t)
         {
@@ -82,14 +95,14 @@ inline bool intersect(const Ray &r, double &t, int &id)
 }
 Vec radiance(const Ray &r, int depth, unsigned short *Xi, int E = 1)
 {
-    double t;   // distance to intersection
+    float t;    // distance to intersection
     int id = 0; // id of intersected object
     if (!intersect(r, t, id))
         return Vec();                // if miss, return black
     const Sphere &obj = spheres[id]; // the hit object
     Vec x = r.o + r.d * t, n = (x - obj.p).norm(), nl = n.dot(r.d) < 0 ? n : n * -1, f = obj.c;
-    double p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y
-                                                        : f.z; // max refl
+    float p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y
+                                                       : f.z; // max refl
     if (++depth > 5 || !p)
         if (erand48(Xi) < p)
             f = f * (1 / p);
@@ -97,7 +110,7 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi, int E = 1)
             return obj.e * E;
     if (obj.refl == DIFF)
     { // Ideal DIFFUSE reflection
-        double r1 = 2 * M_PI * erand48(Xi), r2 = erand48(Xi), r2s = sqrt(r2);
+        float r1 = 2 * M_PI * erand48(Xi), r2 = erand48(Xi), r2s = sqrt(r2);
         Vec w = nl, u = ((fabs(w.x) > .1 ? Vec(0, 1) : Vec(1)) % w).norm(), v = w % u;
         Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
 
@@ -110,16 +123,16 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi, int E = 1)
                 continue; // skip non-lights
 
             Vec sw = s.p - x, su = ((fabs(sw.x) > .1 ? Vec(0, 1) : Vec(1)) % sw).norm(), sv = sw % su;
-            double cos_a_max = sqrt(1 - s.rad * s.rad / (x - s.p).dot(x - s.p));
-            double eps1 = erand48(Xi), eps2 = erand48(Xi);
-            double cos_a = 1 - eps1 + eps1 * cos_a_max;
-            double sin_a = sqrt(1 - cos_a * cos_a);
-            double phi = 2 * M_PI * eps2;
+            float cos_a_max = sqrt(1 - s.rad * s.rad / (x - s.p).dot(x - s.p));
+            float eps1 = erand48(Xi), eps2 = erand48(Xi);
+            float cos_a = 1 - eps1 + eps1 * cos_a_max;
+            float sin_a = sqrt(1 - cos_a * cos_a);
+            float phi = 2 * M_PI * eps2;
             Vec l = su * cos(phi) * sin_a + sv * sin(phi) * sin_a + sw * cos_a;
             l.norm();
             if (intersect(Ray(x, l), t, id) && id == i)
             { // shadow ray
-                double omega = 2 * M_PI * (1 - cos_a_max);
+                float omega = 2 * M_PI * (1 - cos_a_max);
                 e = e + f.mult(s.e * l.dot(nl) * omega) * M_1_PI; // 1/pi for brdf
             }
         }
@@ -130,12 +143,12 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi, int E = 1)
         return obj.e + f.mult(radiance(Ray(x, r.d - n * 2 * n.dot(r.d)), depth, Xi));
     Ray reflRay(x, r.d - n * 2 * n.dot(r.d)); // Ideal dielectric REFRACTION
     bool into = n.dot(nl) > 0;                // Ray from outside going in?
-    double nc = 1, nt = 1.5, nnt = into ? nc / nt : nt / nc, ddn = r.d.dot(nl), cos2t;
+    float nc = 1, nt = 1.5, nnt = into ? nc / nt : nt / nc, ddn = r.d.dot(nl), cos2t;
     if ((cos2t = 1 - nnt * nnt * (1 - ddn * ddn)) < 0) // Total internal reflection
         return obj.e + f.mult(radiance(reflRay, depth, Xi));
     Vec tdir = (r.d * nnt - n * ((into ? 1 : -1) * (ddn * nnt + sqrt(cos2t)))).norm();
-    double a = nt - nc, b = nt + nc, R0 = a * a / (b * b), c = 1 - (into ? -ddn : tdir.dot(n));
-    double Re = R0 + (1 - R0) * c * c * c * c * c, Tr = 1 - Re, P = .25 + .5 * Re, RP = Re / P, TP = Tr / (1 - P);
+    float a = nt - nc, b = nt + nc, R0 = a * a / (b * b), c = 1 - (into ? -ddn : tdir.dot(n));
+    float Re = R0 + (1 - R0) * c * c * c * c * c, Tr = 1 - Re, P = .25 + .5 * Re, RP = Re / P, TP = Tr / (1 - P);
     return obj.e + f.mult(depth > 2 ? (erand48(Xi) < P ? // Russian roulette
                                            radiance(reflRay, depth, Xi) * RP
                                                        : radiance(Ray(x, tdir), depth, Xi) * TP)
@@ -156,8 +169,8 @@ int main(int argc, char *argv[])
                 { // 2x2 subpixel cols
                     for (int s = 0; s < samps; s++)
                     {
-                        double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
-                        double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+                        float r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+                        float r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
                         Vec d = cx * (((sx + .5 + dx) / 2 + x) / w - .5) +
                                 cy * (((sy + .5 + dy) / 2 + y) / h - .5) + cam.d;
                         r = r + radiance(Ray(cam.o + d * 140, d.norm()), 0, Xi) * (1. / samps);
