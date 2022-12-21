@@ -2,3 +2,7 @@
 *.exe
 *.dll
 smallptGPU/smallptGPU
+gmon.out
+*.s
+explicit
+.gdb_history
