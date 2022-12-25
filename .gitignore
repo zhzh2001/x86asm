@@ -6,3 +6,4 @@ gmon.out
 *.s
 explicit
 .gdb_history
+orig
