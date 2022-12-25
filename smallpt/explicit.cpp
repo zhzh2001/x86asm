@@ -2,6 +2,7 @@
 #include <stdlib.h> // Make : g++ -O3 -fopenmp explicit.cpp -o explicit
 #include <stdio.h>  // Remove "-fopenmp" for g++ version < 4.2
 #include <x86intrin.h>
+#include <assert.h>
 #ifdef _WIN32
 // implement erand48() for Windows
 #include <random>
@@ -32,8 +33,9 @@ struct Vec_
     Vec_ operator+(const Vec_ &b) const { return Vec_(x + b.x, y + b.y, z + b.z); }
     Vec_ operator-(const Vec_ &b) const { return Vec_(x - b.x, y - b.y, z - b.z); }
     Vec_ operator*(T b) const { return Vec_(x * b, y * b, z * b); }
+    Vec_ operator/(T b) const { return Vec_(x / b, y / b, z / b); }
     Vec_ mult(const Vec_ &b) const { return Vec_(x * b.x, y * b.y, z * b.z); }
-    Vec_ &norm() { return *this = *this * (1 / sqrt(x * x + y * y + z * z)); }
+    Vec_ &norm() { return *this = *this / sqrt(x * x + y * y + z * z); }
     T dot(const Vec_ &b) const { return x * b.x + y * b.y + z * b.z; } // cross:
     Vec_ operator%(Vec_ &b) { return Vec_(y * b.z - z * b.y, z * b.x - x * b.z, x * b.y - y * b.x); }
 };
@@ -47,6 +49,7 @@ void debug(int line, int depth, __m256 x)
         printf("%d ", p[i]);
     printf("depth = %d, line = %d\n", depth, line);
 }
+const float eps = 1e-6;
 // convert to a AVX vector
 struct Vec_avx
 {
@@ -56,11 +59,12 @@ struct Vec_avx
     Vec_avx operator+(const Vec_avx &b) const { return Vec_avx(x + b.x, y + b.y, z + b.z); }
     Vec_avx operator-(const Vec_avx &b) const { return Vec_avx(x - b.x, y - b.y, z - b.z); }
     Vec_avx operator*(__m256 b) const { return Vec_avx(x * b, y * b, z * b); }
+    Vec_avx operator/(__m256 b) const { return Vec_avx(x / b, y / b, z / b); }
     Vec_avx mult(const Vec_avx &b) const { return Vec_avx(x * b.x, y * b.y, z * b.z); }
     Vec_avx &norm()
     {
-        __m256 inv = _mm256_rsqrt_ps(x * x + y * y + z * z);
-        return *this = *this * inv;
+        __m256 dist = _mm256_sqrt_ps(x * x + y * y + z * z);
+        return *this = *this / dist;
     }
     __m256 dot(const Vec_avx &b) const { return x * b.x + y * b.y + z * b.z; } // cross
     Vec_avx operator%(Vec_avx &b) { return Vec_avx(y * b.z - z * b.y, z * b.x - x * b.z, x * b.y - y * b.x); }
@@ -94,8 +98,8 @@ struct Sphere
     Sphere(float rad_, Vec p_, Vec e_, Vec c_, Refl_t refl_) : rad(rad_), p(p_), e(e_), c(c_), refl(refl_) {}
     float intersect(const Ray &r) const
     {                     // returns distance, 0 if nohit
-        Vecd op = Vecd(p) - r.o; // Solve t^2*d.d + 2*t*(o-p).d + (o-p).(o-p)-R^2 = 0
-        double t, eps = 1e-4, b = op.dot(r.d), det = b * b - op.dot(op) + rad * rad;
+        Vec op = Vec(p) - r.o; // Solve t^2*d.d + 2*t*(o-p).d + (o-p).(o-p)-R^2 = 0
+        float t, eps = 1e-4, b = op.dot(r.d), det = b * b - op.dot(op) + rad * rad;
         if (det < 0)
             return 0;
         else
@@ -108,7 +112,9 @@ struct Sphere
         __m256 t, eps = _mm256_set1_ps(1e-4), b = op.dot(r.d), det = b * b - op.dot(op) + _mm256_set1_ps(rad * rad);
         __m256 mask = _mm256_cmp_ps(det, _mm256_setzero_ps(), _CMP_LT_OQ);
         det = _mm256_sqrt_ps(det);
-        __m256 ans = (t = b - det) > eps ? t : ((t = b + det) > eps ? t : _mm256_setzero_ps());
+        __m256 mask2 = _mm256_cmp_ps(b - det, eps, _CMP_GT_OQ);
+        __m256 mask3 = _mm256_cmp_ps(b + det, eps, _CMP_GT_OQ);
+        __m256 ans = _mm256_blendv_ps(_mm256_blendv_ps(_mm256_setzero_ps(), b + det, mask3), b - det, mask2);
         return _mm256_blendv_ps(ans, _mm256_setzero_ps(), mask);
     }
 };
@@ -120,8 +126,8 @@ Sphere spheres[] = {
     Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(), DIFF),               // Frnt
     Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(.75, .75, .75), DIFF),         // Botm
     Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6), Vec(), Vec(.75, .75, .75), DIFF), // Top
-    Sphere(16.5, Vec(27, 16.5, 47), Vec(), Vec(1, 1, 1) * .999, SPEC),        // Mirr
-    Sphere(16.5, Vec(73, 16.5, 78), Vec(), Vec(1, 1, 1) * .999, REFR),        // Glas
+    // Sphere(16.5, Vec(27, 16.5, 47), Vec(), Vec(1, 1, 1) * .999, SPEC),        // Mirr
+    // Sphere(16.5, Vec(73, 16.5, 78), Vec(), Vec(1, 1, 1) * .999, REFR),        // Glas
     Sphere(1.5, Vec(50, 81.6 - 16.5, 81.6), Vec(4, 4, 4) * 100, Vec(), DIFF), // Lite
 };
 int numSpheres = sizeof(spheres) / sizeof(Sphere);
@@ -226,7 +232,6 @@ struct Sphere_avx
         for (int i = 0; i < 8; i++)
         {
             int idx = (int)id[i];
-            printf("%d ", idx);
             rad[i] = spheres[idx].rad;
             p.x[i] = spheres[idx].p.x;
             p.y[i] = spheres[idx].p.y;
@@ -239,7 +244,6 @@ struct Sphere_avx
             c.z[i] = spheres[idx].c.z;
             refl[i] = spheres[idx].refl;
         }
-        puts("");
     }
 };
 inline __m256 erand48v(unsigned short *Xi)
@@ -261,10 +265,10 @@ inline void erand48tri(unsigned short *Xi, __m256 &c, __m256 &s)
 Vec_avx radiance_avx(const Ray_avx &r, __m256 mask, int depth, unsigned short *Xi, int E = 1)
 {
     Vec_avx ans;
-    if (_mm256_testz_ps(mask, mask) || depth > 30)
+    if (_mm256_testz_ps(mask, mask))
         return ans;
     __m256 t;  // distance to intersection
-    __m256 id; // id of intersected object
+    __m256 id = _mm256_set1_ps(0); // id of intersected object
     mask = _mm256_and_ps(mask, intersect_avx(r, t, id));
     // for mask[i] == 0, the corresponding value in ans is not updated
     Sphere_avx obj(id); // the hit objects
@@ -274,7 +278,7 @@ Vec_avx radiance_avx(const Ray_avx &r, __m256 mask, int depth, unsigned short *X
     Vec_avx f = obj.c;
     __m256 p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y
                                                         : f.z; // max refl
-    __m256 mask2 = _mm256_and_ps(mask, _mm256_or_ps((__m256)_mm256_set1_epi32(++depth > 5 ? 0xffffffff : 0), _mm256_cmp_ps(p, _mm256_set1_ps(0), _CMP_NEQ_OQ)));
+    __m256 mask2 = _mm256_and_ps(mask, _mm256_or_ps((__m256)_mm256_set1_epi32(++depth > 5 ? 0xffffffff : 0), _mm256_cmp_ps(p, _mm256_set1_ps(0), _CMP_EQ_OQ)));
     __m256 mask3 = _mm256_cmp_ps(erand48v(Xi), p, _CMP_LT_OQ);
     f = f.blend(f * (1.0 / p), _mm256_and_ps(mask2, mask3));
     ans = ans.blend(obj.e * _mm256_set1_ps(E), _mm256_andnot_ps(mask3, mask2));
@@ -292,6 +296,7 @@ Vec_avx radiance_avx(const Ray_avx &r, __m256 mask, int depth, unsigned short *X
 
     // Loop over any lights
     Vec_avx e;
+    __m256 epss[10], phicc[10], phiss[10];
     for (int i = 0; i < numSpheres; i++)
     {
         const Sphere &s = spheres[i];
@@ -304,17 +309,73 @@ Vec_avx radiance_avx(const Ray_avx &r, __m256 mask, int depth, unsigned short *X
         Vec_avx sv = sw % su;
         __m256 cos_a_max = _mm256_sqrt_ps(1 - s.rad * s.rad / (x - Vec_avx(s.p)).dot(x - Vec_avx(s.p)));
         __m256 eps1 = erand48v(Xi);
+        epss[i] = eps1;
         __m256 cos_a = 1 - eps1 + eps1 * cos_a_max;
         __m256 sin_a = _mm256_sqrt_ps(1 - cos_a * cos_a);
         // __m256 phi = 2 * M_PI * erand48v(Xi);
         __m256 phic, phis;
         erand48tri(Xi, phic, phis);
+        phicc[i] = phic;
+        phiss[i] = phis;
         Vec_avx l = su * phic * sin_a + sv * phis * sin_a + sw * cos_a;
         l.norm();
-        __m256 mask7 = _mm256_and_ps(intersect_avx(Ray_avx(x, l), t, id), _mm256_cmp_ps(id, _mm256_set1_ps(i), _CMP_EQ_OQ));
+        __m256 t1, id1;
+        __m256 isect = intersect_avx(Ray_avx(x, l), t1, id1);
+        __m256 mask7 = _mm256_and_ps(isect, _mm256_cmp_ps(id1, _mm256_set1_ps(i), _CMP_EQ_OQ));
         __m256 omega = 2 * (float)M_PI * (1 - cos_a_max);
-        e = e.blend(e + f.mult(Vec_avx(s.e) * l.dot(nl) * _mm256_set1_ps(M_1_PI) * omega), mask7);
+        e = e.blend(e + f.mult(Vec_avx(s.e) * l.dot(nl) * omega) * _mm256_set1_ps(M_1_PI), mask7);
     }
+
+    /* compare answer with reference
+    Vec_avx ans_ref;
+    for (int i = 0; i < 8; i++)
+    {
+        int idx = id[i];
+        Sphere obj = spheres[idx];
+        if (obj.refl == DIFF)
+        {
+            Vec w_ref(nl.x[i], nl.y[i], nl.z[i]);
+            Vec u_ref = ((fabs(w_ref.x) > .1 ? Vec(0, 1) : Vec(1)) % w_ref).norm();
+            Vec v_ref = w_ref % u_ref;
+            Vec d_ref = (u_ref * r1c[i] * r2s[i] + v_ref * r1s[i] * r2s[i] + w_ref * sqrt(1 - r2[i])).norm();
+            Vec x_ref = Vec(x.x[i], x.y[i], x.z[i]);
+            Vec e_ref;
+            for (int j = 0; j < numSpheres; j++)
+            {
+                const Sphere &s_ref = spheres[j];
+                if (s_ref.e.x <= 0 && s_ref.e.y <= 0 && s_ref.e.z <= 0)
+                    continue; // skip non-lights
+
+                Vec sw_ref = s_ref.p - x_ref;
+                Vec su_ref = ((fabs(sw_ref.x) > .1 ? Vec(0, 1) : Vec(1)) % sw_ref).norm();
+                Vec sv_ref = sw_ref % su_ref;
+                float cos_a_max_ref = sqrt(1 - s_ref.rad * s_ref.rad / (x_ref - s_ref.p).dot(x_ref - s_ref.p));
+                float eps1_ref = epss[j][i];
+                float cos_a_ref = 1 - eps1_ref + eps1_ref * cos_a_max_ref;
+                float sin_a_ref = sqrt(1 - cos_a_ref * cos_a_ref);
+                Vec l = su_ref * phicc[j][i] * sin_a_ref + sv_ref * phiss[j][i] * sin_a_ref + sw_ref * cos_a_ref;
+                l.norm();
+                float t_ref;
+                int id_ref;
+                if (intersect(Ray(x_ref, l), t_ref, id_ref) && id_ref == j)
+                {
+                    float omega_ref = 2 * (float)M_PI * (1 - cos_a_max_ref);
+                    Vec f_ref(f.x[i], f.y[i], f.z[i]);
+                    e_ref = e_ref + f_ref.mult(s_ref.e * l.dot(w_ref) * omega_ref) * M_1_PI;
+                }
+            }
+            if (mask[i])
+            {
+                if (fabs((e_ref.x - e.x[i]) / e_ref.x) > eps || fabs((e_ref.y - e.y[i]) / e_ref.y) > eps || fabs((e_ref.z - e.z[i]) / e_ref.z) > eps)
+                {
+                    printf("i=%d, e_ref=(%f, %f, %f), e=(%f, %f, %f)\n", i, e_ref.x, e_ref.y, e_ref.z, e.x[i], e.y[i], e.z[i]);
+                    exit(1);
+                }
+            }
+        }
+    }
+    */
+
     ans = ans.blend(obj.e * _mm256_set1_ps(E) + e + f.mult(radiance_avx(Ray_avx(x, d), _mm256_and_ps(mask4, mask), depth, Xi)), _mm256_and_ps(mask4, mask));
     __m256 mask6 = _mm256_cmp_ps(obj.refl, _mm256_set1_ps(1), _CMP_EQ_OQ); // Ideal SPECULAR reflection
     Ray_avx reflRay(x, r.d - n * _mm256_set1_ps(2) * n.dot(r.d));
