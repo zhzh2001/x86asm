@@ -536,6 +536,7 @@ Vec_avx radiance_avx(const Ray_avx &r, __m256 mask, int depth, unsigned short *X
     */
 
     ans = ans.blend(obj.e * _mm256_set1_ps(E) + e + f.mult(radiance_avx(Ray_avx(x, d), _mm256_and_ps(mask4, mask), depth, Xi)), _mm256_and_ps(mask4, mask));
+    /*
     __m256 mask6 = _mm256_cmp_ps(obj.refl, _mm256_set1_ps(1), _CMP_EQ_OQ); // Ideal SPECULAR reflection
     Ray_avx reflRay(x, r.d - n * _mm256_set1_ps(2) * n.dot(r.d));
     ans = ans.blend(obj.e + f.mult(radiance_avx(reflRay, _mm256_and_ps(mask6, mask), depth, Xi)), _mm256_and_ps(mask6, mask));
@@ -571,6 +572,7 @@ Vec_avx radiance_avx(const Ray_avx &r, __m256 mask, int depth, unsigned short *X
     {
         ans = ans.blend(obj.e + f.mult(radiance_avx(reflRay, mask, depth, Xi) * Re + radiance_avx(Ray_avx(x, tdir), mask, depth, Xi) * Tr), mask);
     }
+    */
     return ans;
 }
 int main(int argc, char *argv[])

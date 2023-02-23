@@ -53,7 +53,6 @@
  *
  */
 
-#include <linux/linkage.h>
 
 #define DIGEST_PTR	%rdi	/* 1st arg */
 #define DATA_PTR	%rsi	/* 2nd arg */
